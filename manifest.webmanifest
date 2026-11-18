@@ -1,0 +1,23 @@
+{
+  "name": "Ça déraille !",
+  "short_name": "Ça déraille",
+  "lang": "fr-CA",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#168AF2",
+  "theme_color": "#168AF2",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
