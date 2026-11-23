@@ -381,6 +381,12 @@ const DEF = {
   catapulte:{name:"Catapulte", hint:"Le bras attrape le wagon et le lance très haut et très loin!"},
   ascenseur:{name:"Ascenseur", hint:"Une cabine monte le wagon de 10 m tout droit."},
   fusee:{name:"Fusée", hint:"Accroche une fusée au wagon : BOUM après 5 secondes, et ça donne un gros coup de vitesse!"},
+  bassin:{name:"Bassin", hint:"Le rail plonge dans l'eau : SPLASH! Plus tu arrives vite, plus ça éclabousse."},
+  canon:{name:"Canon", hint:"Le canon pivote et tire le wagon. Choisis l'angle!"},
+  canon30:{name:"Canon 30°", hint:"Tir bas et loin. Regarde les pointillés : ils montrent où le wagon va tomber."},
+  canon45:{name:"Canon 45°", hint:"Le tir le plus long! Regarde les pointillés : ils montrent où le wagon va tomber."},
+  canon60:{name:"Canon 60°", hint:"Tir haut. Regarde les pointillés : ils montrent où le wagon va tomber."},
+  canon75:{name:"Canon 75°", hint:"Presque à la verticale! Regarde les pointillés : ils montrent où le wagon va tomber."},
   turbo:{name:"Turbo", hint:"Le turbo pousse le wagon encore plus vite."},
   looping:{name:"Looping", hint:"Il faut arriver très vite pour faire le tour!"},
   tremplin:{name:"Tremplin", hint:"Le wagon saute par-dessus le trou. Assez de vitesse?"},
@@ -391,11 +397,15 @@ const EXAMPLE = ["station","plat","chaine","gdesc","looping","plat","turbo","tre
 const PRESETS = [
   {id:"petit", name:"Le P'tit Train", level:"Facile", desc:"Des petites bosses tranquilles. Parfait pour commencer.", list:["station","plat","chaine","descend","plat","bosse","descend","creux","plat","freins"]},
   {id:"loop", name:"Le Grand Looping", level:"Moyen", desc:"Une grosse descente, un looping et un saut par-dessus le trou.", list:EXAMPLE},
+  {id:"plouf", name:"Le Grand Plouf", level:"Moyen", desc:"Un bassin, puis un canon qui te tire direct dans un deuxième bassin. SPLASH!", list:["station","plat","chaine","gdesc","bassin","plat","canon45","plat","plat","plat","plat","plat","bassin","plat","plat","freins"]},
   {id:"machine", name:"La Machine Folle", level:"Extrême", desc:"Ascenseur, fusée et catapulte : le wagon vole jusqu'aux nuages!", list:["station","plat","ascenseur","plat","gdesc","looping","plat","fusee","plat","mchaine","plat","catapulte","plat","plat","plat","plat","plat","plat","plat","plat","plat","mdesc","plat","gdesc","plat","freins"]},
   {id:"extreme", name:"Le Défi Extrême", level:"Extrême", desc:"Deux loopings, deux sauts et ça va très vite!", list:["station","chaine","chaine","gdesc","gdesc","looping","plat","turbo","tremplin","plat","chaine","gdesc","looping","plat","turbo","tremplin","plat","bosse","descend","freins"]}
 ];
 
 const isChain=t=>t==="chaine"||t==="mchaine";
+const isCanon=t=>/^canon\d+$/.test(t);
+const canonAng=t=>+String(t).slice(5)||45;
+const CANON_V=15, CANON_I=8;
 function smooth(w, dy, n){ const a=[]; for(let i=0;i<=n;i++){ const t=i/n; a.push([w*t, dy*(1-Math.cos(Math.PI*t))/2, 0]); } return a; }
 function gen(type){
   switch(type){
@@ -409,6 +419,7 @@ function gen(type){
     case "mdesc": return smooth(11,-15,150);
     case "catapulte": return smooth(5,0,25);
     case "fusee": return smooth(3,0,15);
+    case "bassin": { const a=smooth(4,-3,40); for(let i=1;i<=12;i++) a.push([4+2.4*i/12,-3,0]); smooth(4,2,40).slice(1).forEach(q=>a.push([6.4+q[0],-3+q[1],0])); return a; }
     case "ascenseur": { const a=[]; for(let i=0;i<=15;i++) a.push([3*i/15,0,0]); a.push([3,10,1]); for(let i=1;i<=15;i++) a.push([3+3*i/15,10,0]); return a; }
     case "gdesc": return smooth(6,-5,70);
     case "bosse": case "creux": {
@@ -432,6 +443,7 @@ function gen(type){
       return a;
     }
   }
+  if(isCanon(type)) return smooth(7,0,35);
   return smooth(3,0,15);
 }
 
@@ -447,8 +459,12 @@ function buildTrack(list){
       minY=Math.min(minY,py); maxY=Math.max(maxY,py); minX=Math.min(minX,px); maxX=Math.max(maxX,px);
     });
     const last=pts[pts.length-1];
-    pieces.push({type,x0:x,y0:y,x1:last.x,y1:last.y,iStart,iEnd:pts.length-1,minY,maxY,minX,maxX,
-      bad: minY<0.4 ? "low" : (maxY>90 ? "high" : "")});
+    let pool=null;
+    if(type==="bassin"){ const wy=y-1.75; let xa=Infinity, xb=-Infinity;
+      for(let i=iStart;i<pts.length;i++){ if(pts[i].y<wy){ xa=Math.min(xa,pts[i].x); xb=Math.max(xb,pts[i].x); } }
+      pool={wy,x0:xa-0.25,x1:xb+0.25,bot:minY}; }
+    pieces.push({type,x0:x,y0:y,x1:last.x,y1:last.y,iStart,iEnd:pts.length-1,minY,maxY,minX,maxX,pool,
+      bad: minY<(type==="bassin"?-3.6:0.4) ? "low" : (maxY>90 ? "high" : "")});
     x=last.x; y=last.y;
   });
   const segs=[];
@@ -472,13 +488,45 @@ function buildTrack(list){
       if(!buckets.has(bx)) buckets.set(bx,[]); buckets.get(bx).push(i);
     }
   });
-  return {list,pts,segs,pieces,buckets,bad:pieces.some(p=>p.bad),endX:x};
+  return {list,pts,segs,pieces,buckets,pools:pieces.filter(p=>p.pool).map(p=>p.pool),bad:pieces.some(p=>p.bad),endX:x};
+}
+function poolAt(T,x){ for(const p of T.pools) if(x>=p.x0&&x<=p.x1) return p; return null; }
+function floorAt(T,x){ const p=poolAt(T,x); return p?Math.min(0,p.bot-0.3):0; }
+// Le wagon en vol (ox,oy)->(x,y) touche-t-il un rail ? Renvoie {i,u,cx,cy,g} ou null.
+function landHit(T,ox,oy,x,y){
+  const cand=new Set([...(T.buckets.get(Math.floor(x))||[]),...(T.buckets.get(Math.floor(ox))||[])]);
+  for(const i of cand){
+    const g=T.segs[i]; if(g.cos<0.2) continue;
+    const a=T.pts[i];
+    const s0=-g.sin*(ox-a.x)+g.cos*(oy-a.y), s1=-g.sin*(x-a.x)+g.cos*(y-a.y);
+    if(s0>=-0.15 && s1<=0){
+      const f=s0/((s0-s1)||1), cx=ox+(x-ox)*f, cy=oy+(y-oy)*f;
+      const u=((cx-a.x)*g.cos+(cy-a.y)*g.sin)/g.len;
+      if(u<-0.05||u>1.05) continue;
+      return {i,u,cx,cy,g};
+    }
+  }
+  return null;
+}
+// Trajectoire prévue d'un canon (pour les pointillés en construction).
+function predictCanon(T,pi){
+  const pc=T.pieces[pi], P=T.pts[pc.iStart+CANON_I], a=canonAng(pc.type)*Math.PI/180;
+  let x=P.x+Math.cos(a)*0.9, y=P.y+Math.sin(a)*0.9, vx=CANON_V*Math.cos(a), vy=CANON_V*Math.sin(a);
+  const out=[[x,y]], dt=1/60;
+  for(let t=0;t<9;t+=dt){
+    const ox=x, oy=y; vy-=G*dt; x+=vx*dt; y+=vy*dt;
+    const pl=poolAt(T,x); if(pl&&y<pl.wy){ const f=Math.exp(-2.2*dt); vx*=f; vy*=f; }
+    out.push([x,y]);
+    if(t>0.08){ const h=landHit(T,ox,oy,x,y); if(h){ out[out.length-1]=[h.cx,h.cy]; return {pts:out,land:true}; } }
+    if(y<=floorAt(T,x)) return {pts:out,land:false};
+  }
+  return {pts:out,land:false};
 }
 
 const START_I = 8;
 function newSim(T){
   const p=T.pts[START_I];
-  return {rocket:null,booms:0,used:{},hold:null,elev:null,catas:0,lifts:0,T,state:"ready",i:START_I,u:0,v:0,px:p.x,py:p.y,vx:0,vy:0,ang:0,spin:0,t:0,launchT:0,
+  return {rocket:null,booms:0,used:{},hold:null,elev:null,catas:0,lifts:0,canons:0,splashes:0,splashV:0,inWater:false,T,state:"ready",i:START_I,u:0,v:0,px:p.x,py:p.y,vx:0,vy:0,ang:0,spin:0,t:0,launchT:0,
     startX:p.x,maxX:p.x,maxV:0,air:0,cause:"",lastGain:0,still:0,jumps:0,maxPiece:0,result:null,noLand:false};
 }
 function trackPos(S){ const a=S.T.pts[S.i], b=S.T.pts[S.i+1]; return {x:a.x+(b.x-a.x)*S.u, y:a.y+(b.y-a.y)*S.u}; }
@@ -520,6 +568,13 @@ function step(S,dt){
       if(S.state==="track") S.v=Math.max(S.v,0)+12;
       else if(S.state==="air"){ const sp=Math.hypot(S.vx,S.vy)||1; S.vx+=S.vx/sp*12; S.vy+=S.vy/sp*12; } }
   }
+  if(S.state==="hold" && S.hold.kind==="canon"){
+    const Hd=S.hold; Hd.t+=dt; S.lastGain=S.t;
+    const k=Math.min(1,Hd.t/0.9), e=k*k*(3-2*k), a=Hd.ang*e;
+    S.ang=a; S.px=Hd.p.x+Math.cos(a)*0.9; S.py=Hd.p.y+Math.sin(a)*0.9;
+    if(Hd.t>=1.3){ S.state="air"; S.vx=CANON_V*Math.cos(Hd.ang); S.vy=CANON_V*Math.sin(Hd.ang); S.cause="canon"; S.noLand=false; S.launchT=S.t; S.canons++; S.hold=null; }
+    return;
+  }
   if(S.state==="hold"){
     S.hold.t-=dt; if(S.hold.t<=0){ const a=55*Math.PI/180, v=17; S.state="air"; S.vx=v*Math.cos(a); S.vy=v*Math.sin(a); S.cause="cata"; S.noLand=false; S.launchT=S.t; S.catas++; S.hold=null; }
     return;
@@ -538,12 +593,18 @@ function step(S,dt){
       if(Math.abs(S.v)<0.35) return finish(S,"arrive");
       a=-Math.sign(S.v)*(6+2.5*Math.abs(S.v));
     }
+    const pl=T.pieces[s.piece].pool, inW=!!(pl&&S.py<pl.wy);
+    if(inW) a-=Math.sign(S.v)*(0.3+0.045*S.v*S.v);
+    if(inW&&!S.inWater){ S.splashes++; S.splashV=Math.abs(S.v); }
+    S.inWater=inW;
     const nv=S.v+a*dt;
     S.v = (s.type==="freins" && Math.sign(nv)!==Math.sign(S.v)) ? 0 : nv;
     if(isChain(s.type)){ const cs=s.type==="mchaine"?4:2.5; if(S.v<cs) S.v=cs; }
     const N=S.v*S.v*s.k + G*s.cos;
     if(N<-0.4){ if(s.cos<0.35){ launch(S,"loop",true); return; } if(s.type==="bosse"){ launch(S,"lift",false); return; } }
     if(s.type==="catapulte" && S.v>0 && !S.used[s.piece]){ const pc=T.pieces[s.piece]; S.used[s.piece]=1; S.i=pc.iStart+12; S.u=0; S.v=0; const p=trackPos(S); S.px=p.x; S.py=p.y; S.ang=0; S.state="hold"; S.hold={t:0.9,piece:s.piece}; return; }
+    if(isCanon(s.type) && S.v>0 && !S.used[s.piece]){ const pc=T.pieces[s.piece], ci=pc.iStart+CANON_I;
+      if(S.i>=ci){ S.used[s.piece]=1; S.i=ci; S.u=0; S.v=0; const p=trackPos(S); S.state="hold"; S.hold={kind:"canon",t:0,piece:s.piece,ang:canonAng(s.type)*Math.PI/180,p:{x:p.x,y:p.y}}; S.px=p.x+0.9; S.py=p.y; S.ang=0; return; } }
     if(s.type==="fusee" && S.v>0 && !S.rocket && !S.used[s.piece]){ S.used[s.piece]=1; S.rocket={t:5}; }
     const ev=advance(S,S.v*dt);
     if(ev==="end"){ launch(S,"end",false); return; }
@@ -564,6 +625,8 @@ function step(S,dt){
   if(S.state==="air"){
     const ox=S.px, oy=S.py;
     S.vy-=G*dt; S.px+=S.vx*dt; S.py+=S.vy*dt; S.air+=dt;
+    const apl=poolAt(T,S.px);
+    if(apl&&S.py<apl.wy){ if(!S.inWater){ S.splashes++; S.splashV=Math.hypot(S.vx,S.vy); } S.inWater=true; const f=Math.exp(-2.2*dt); S.vx*=f; S.vy*=f; } else S.inWater=false;
     S.maxV=Math.max(S.maxV,Math.hypot(S.vx,S.vy));
     if(S.px>S.maxX) S.maxX=S.px;
     if(S.noLand){ S.spin+=dt*5; S.ang+=dt*5; }
@@ -571,25 +634,16 @@ function step(S,dt){
       const va=Math.atan2(S.vy,S.vx); const target=S.vx>=0?va:va+Math.PI;
       let d=Math.atan2(Math.sin(target-S.ang),Math.cos(target-S.ang)); S.ang+=d*Math.min(1,dt*4);
       if(S.t-S.launchT>0.08){
-        const cand=new Set([...(T.buckets.get(Math.floor(S.px))||[]),...(T.buckets.get(Math.floor(ox))||[])]);
-        for(const i of cand){
-          const g=T.segs[i]; if(g.cos<0.2) continue;
-          const a=T.pts[i];
-          const s0=-g.sin*(ox-a.x)+g.cos*(oy-a.y), s1=-g.sin*(S.px-a.x)+g.cos*(S.py-a.y);
-          if(s0>=-0.15 && s1<=0){
-            const f=s0/((s0-s1)||1), cx=ox+(S.px-ox)*f, cy=oy+(S.py-oy)*f;
-            const u=((cx-a.x)*g.cos+(cy-a.y)*g.sin)/g.len;
-            if(u<-0.05||u>1.05) continue;
-            const vn=-S.vx*g.sin+S.vy*g.cos, vt=S.vx*g.cos+S.vy*g.sin;
-            if(vn<-18){ S.px=cx; S.py=cy; return finish(S,"hard"); }
-            S.state="track"; S.i=i; S.u=Math.min(1,Math.max(0,u)); S.v=vt*0.97; S.ang=g.phi;
-            if(S.cause==="gap"||S.cause==="cata") S.jumps++;
-            S.lastGain=S.t; return;
-          }
-        }
+        const h=landHit(T,ox,oy,S.px,S.py);
+        if(h){ const g=h.g, vn=-S.vx*g.sin+S.vy*g.cos, vt=S.vx*g.cos+S.vy*g.sin;
+          if(vn<-18){ S.px=h.cx; S.py=h.cy; return finish(S,"hard"); }
+          S.state="track"; S.i=h.i; S.u=Math.min(1,Math.max(0,h.u)); S.v=vt*0.97; S.ang=g.phi;
+          if(S.cause==="gap"||S.cause==="cata"||S.cause==="canon") S.jumps++;
+          S.lastGain=S.t; return; }
       }
     }
-    if(S.py<=0){ S.py=0; const map={loop:"loop",gap:"gap",end:"end",lift:"fly",cata:"cata"}; return finish(S,map[S.cause]||"fly"); }
+    const fl=floorAt(T,S.px);
+    if(S.py<=fl){ S.py=fl; const map={loop:"loop",gap:"gap",end:"end",lift:"fly",cata:"cata",canon:"canon"}; return finish(S,map[S.cause]||"fly"); }
     if(S.t>120) return finish(S,"stop");
   }
 }
@@ -729,6 +783,9 @@ function drawPreview(c,lst){
   x.lineCap="round"; x.lineJoin="round";
   path(); x.strokeStyle=C.ink; x.lineWidth=Math.max(4,sc*0.4); x.stroke();
   path(); x.strokeStyle=C.rail; x.lineWidth=Math.max(2.5,sc*0.25); x.stroke();
+  TT.pieces.forEach(pc=>{ if(!pc.pool) return; const pl=pc.pool; x.fillStyle="rgba(72,185,248,.85)"; x.beginPath(); let f=true;
+    for(let i=pc.iStart;i<=pc.iEnd;i++){ const q=TT.pts[i]; if(q.y>pl.wy) continue; const [a,b]=P(q.x,q.y-0.3); f?x.moveTo(a,b):x.lineTo(a,b); f=false; }
+    const [a1,b1]=P(pl.x1,pl.wy), [a0]=P(pl.x0,pl.wy); x.lineTo(a1,b1); x.lineTo(a0,b1); x.closePath(); x.fill(); });
   x.fillStyle=C.bulb; TT.pts.forEach((p,i)=>{ if(i%16) return; const [a,b]=P(p.x,p.y); x.beginPath(); x.arc(a,b-Math.max(2,sc*0.25),Math.max(1.4,sc*0.1),0,7); x.fill(); });
   TT.pieces.forEach(p=>{ if(p.type!=="station"&&p.type!=="freins") return; const [a,b]=P(p.x0+0.6,p.y0+2.6), [a2]=P(p.x1-0.6,0);
     x.fillStyle=p.type==="station"?C.rail:C.accent; x.strokeStyle=C.ink; x.lineWidth=1.5; x.fillRect(a,b,a2-a,sc*0.8); x.strokeRect(a,b,a2-a,sc*0.8);
@@ -829,7 +886,7 @@ function showPiece(p){ const view=W/cam.ppm; if(p.maxX+5>cam.tx+view) cam.tx=p.m
 function clampCam(){ const view=W/cam.ppm, vh=H/cam.ppm; cam.tx=Math.max(-4,Math.min(cam.tx,Math.max(-1.5,T.endX+6-view))); cam.ty=Math.max(-1.2,Math.min(cam.ty??-1.2,Math.max(-1.2,trackTop()+7-vh))); }
 
 /* ---------- Inventaire ---------- */
-const GROUPS=[["Rails","--g-rails",["plat","monte","descend","bosse","creux"]],["Grandes pentes","--g-pentes",["gmonte","gdesc","chaine","mchaine","mdesc"]],["Spectaculaire","--g-spec",["looping","tremplin","turbo"]],["Machines","--g-mach",["catapulte","ascenseur","fusee"]],["La fin","--g-fin",["freins"]]];
+const GROUPS=[["Rails","--g-rails",["plat","monte","descend","bosse","creux"]],["Grandes pentes","--g-pentes",["gmonte","gdesc","chaine","mchaine","mdesc"]],["Spectaculaire","--g-spec",["looping","tremplin","turbo","bassin"]],["Machines","--g-mach",["catapulte","ascenseur","fusee","canon"]],["La fin","--g-fin",["freins"]]];
 const GICON={
  "Rails":'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M3 18a9 9 0 0 1 18 0"/></svg>',
  "Grandes pentes":'<svg viewBox="0 0 24 24" fill="currentColor" stroke="#0B1638" stroke-width="1.5" stroke-linejoin="round"><path d="M2 20l7-13 4 6 2-3 7 10z"/><path d="M9 7l2 3-2-1-1 1z" fill="#fff"/></svg>',
@@ -849,6 +906,12 @@ function drawIcon(c,type){
   if(isChain(type)){ x.strokeStyle=C.ink; x.lineWidth=3; for(let i=4;i<g.length-4;i+=7){ const a=g[i-2],b=g[i+2]; let tx=(b[0]-a[0]),ty=-(b[1]-a[1]); const l=Math.hypot(tx,ty)||1; tx/=l; ty/=l; const X0=ox+g[i][0]*sc, Y0=oy-g[i][1]*sc; x.beginPath(); x.moveTo(X0-ty*7,Y0+tx*7); x.lineTo(X0+ty*7,Y0-tx*7); x.stroke(); } }
   if(type==="freins"){ path(); x.setLineDash([6,6]); x.strokeStyle=C.ink; x.lineWidth=5; x.stroke(); x.setLineDash([]); }
   if(type==="ascenseur"){ x.strokeStyle=C.ink; x.lineWidth=3; x.setLineDash([4,4]); x.beginPath(); x.moveTo(w/2,h-12); x.lineTo(w/2,12); x.stroke(); x.setLineDash([]); x.fillStyle=C.cart; x.fillRect(w/2-9,h/2-8,18,16); x.strokeRect(w/2-9,h/2-8,18,16); }
+  if(type==="bassin"){ x.save(); x.beginPath(); g.forEach((p,i)=>{ const X=ox+p[0]*sc, Y=oy-p[1]*sc; i?x.lineTo(X,Y):x.moveTo(X,Y); }); x.closePath();
+    x.clip(); x.fillStyle="rgba(40,150,240,.75)"; x.fillRect(0,oy+1.75*sc,w,h); x.restore(); x.strokeStyle="#BFE9FF"; x.lineWidth=2.5; x.beginPath(); x.moveTo(ox+0.9*sc,oy+1.75*sc); x.lineTo(ox+9.6*sc,oy+1.75*sc); x.stroke(); }
+  if(type==="canon"||isCanon(type)){ const a=(type==="canon"?45:canonAng(type))*Math.PI/180, px=w*0.36, py=h-14;
+    x.save(); x.translate(px,py); x.rotate(-a); x.fillStyle="#3A4C78"; x.strokeStyle=C.ink; x.lineWidth=2.5; x.beginPath(); x.rect(-6,-26,46,22); x.fill(); x.stroke();
+    x.fillStyle=C.cart; x.fillRect(4,-26,6,22); x.fillRect(26,-26,6,22); x.strokeRect(4,-26,6,22); x.strokeRect(26,-26,6,22); x.restore();
+    x.fillStyle=C.rail; x.beginPath(); x.arc(px,py,8,0,7); x.fill(); x.stroke(); }
   if(type==="catapulte"){ x.strokeStyle=C.ink; x.lineWidth=9; x.lineCap="round"; x.beginPath(); x.moveTo(w*0.35,h-14); x.lineTo(w*0.72,12); x.stroke(); x.strokeStyle=C.cart; x.lineWidth=5; x.stroke(); x.fillStyle=C.rail; x.strokeStyle=C.ink; x.lineWidth=2.5; x.beginPath(); x.arc(w*0.35,h-14,6,0,7); x.fill(); x.stroke(); }
   if(type==="fusee"){ x.fillStyle=C.rail; x.strokeStyle=C.ink; x.lineWidth=2.5; x.beginPath(); x.moveTo(w/2-7,h-16); x.lineTo(w/2-7,22); x.lineTo(w/2,8); x.lineTo(w/2+7,22); x.lineTo(w/2+7,h-16); x.closePath(); x.fill(); x.stroke(); x.fillStyle=C.paper; x.fillRect(w/2-7,30,14,5); x.fillStyle=C.sun; x.beginPath(); x.moveTo(w/2-5,h-16); x.lineTo(w/2,h-6); x.lineTo(w/2+5,h-16); x.fill(); }
   if(type==="turbo"){ x.strokeStyle=C.ink; x.lineWidth=3; for(let k=0;k<3;k++){ const cx=w/2-18+k*16; x.beginPath(); x.moveTo(cx-4,h/2-14); x.lineTo(cx+4,h/2-8); x.lineTo(cx-4,h/2-2); x.stroke(); } }
@@ -912,7 +975,8 @@ function renderStrip(){
     const ch=document.createElement("div"); ch.className="chip"+(T.pieces[i]&&T.pieces[i].bad?" bad":"")+(i===picked?" hl":""); ch.style.setProperty("--gc",groupColor(type)); ch.dataset.i=i;
     const im=document.createElement("img"); im.src=iconURL(type); im.alt=""; const sp=document.createElement("span"); sp.textContent=type==="station"?"Départ":DEF[type].name;
     ch.append(im,sp);
-    ch.addEventListener("click",()=>{ picked=i; flash={i,t:clock}; setSlot(i); SFX.click(); });
+    ch.addEventListener("click",()=>{ picked=i; flash={i,t:clock}; setSlot(i); SFX.click();
+      if(isCanon(type)) askCanon(a=>{ if(list[i]===type&&a!==canonAng(type)){ custom=true; pushHist(); list[i]="canon"+a; rebuild(); flash={i,t:clock}; SFX.pop(); toast(DEF[list[i]].name+" : regarde les pointillés!"); } },canonAng(type)); });
     ch.addEventListener("pointerenter",e=>{ if(e.pointerType==="mouse"&&!dragPiece){ picked=i; } });
     ch.addEventListener("pointerleave",e=>{ if(e.pointerType==="mouse"&&picked===i) picked=-1; });
     if(i>0){ const x=document.createElement("button"); x.type="button"; x.className="x"; x.setAttribute("aria-label","Retirer "+DEF[type].name); x.innerHTML=XSVG;
@@ -927,8 +991,13 @@ function renderStrip(){
 
 /* ---------- Modifier le circuit ---------- */
 function pushHist(){ hist.push({list:list.slice(),slot}); if(hist.length>60) hist.shift(); }
+function askCanon(cb,cur){
+  modal({title:"Angle du canon",text:"Le wagon entre à l'horizontale, le canon pivote jusqu'à cet angle, puis BOUM!",
+    buttons:[30,45,60,75].map(a=>({label:a+"°",primary:a===(cur||45),act:()=>{ setTimeout(()=>cb(a),0); }}))});
+}
 function insertAt(after,type){
   if(mode!=="build") return;
+  if(type==="canon"){ askCanon(a=>insertAt(after,"canon"+a)); return; }
   custom=true; pushHist(); list.splice(after+1,0,type); slot=after+1; picked=-1; rebuild();
   const p=T.pieces[slot]; flash={i:slot,t:clock};
   burst((p.minX+p.maxX)/2,(p.minY+p.maxY)/2+0.5,"star",14); SFX.pop(); showPiece(p);
@@ -961,7 +1030,7 @@ function toast(msg,warn){ const t=$("toast"); t.textContent=msg; t.classList.tog
 /* ---------- Toucher la scène ---------- */
 let drag=null;
 function hitAt(sx,sy){ for(let k=hits.length-1;k>=0;k--){ const h=hits[k]; if(h.rect){ const [x,y,w,hh]=h.rect; if(sx>=x&&sx<=x+w&&sy>=y&&sy<=y+hh) return h; } else if(Math.hypot(h.x-sx,h.y-sy)<=h.r) return h; } return null; }
-let sling=null, snap=null, banners=[], tier=0, ts=1, crashFx=null, cloudDone=false, boostUntil=0, seenBooms=0, hadRocket=false;
+let sling=null, snap=null, banners=[], tier=0, ts=1, crashFx=null, cloudDone=false, boostUntil=0, seenBooms=0, hadRocket=false, seenSplash=0;
 cv.addEventListener("pointerdown",e=>{
   if(mode==="test"){ if(sim&&sim.state==="ready"&&!charging){ ac(); sling={x:e.clientX,y:e.clientY,pull:0,step:0}; try{ cv.setPointerCapture(e.pointerId); }catch(_){} say("Tire! Tire!",99); } return; }
   if(mode!=="build") return; ac(); drag={x:e.clientX,y:e.clientY,cx:cam.tx,cy:cam.ty,moved:false}; try{ cv.setPointerCapture(e.pointerId); }catch(_){} });
@@ -1019,7 +1088,7 @@ function resetCart(){
   cam.ppm=Math.max(22,Math.min(46,H/10.5)); cam.x=sim.px-W*0.3/cam.ppm; cam.y=-1.2; shake=0; lastType="station"; lastState="ready"; chainAcc=0;
   const b=$("btnPush"); b.disabled=false; setPush("Ou tiens ce bouton");
   $("launchHint").classList.remove("go"); $("launchHint").querySelector("span").textContent="Tire le wagon vers l'arrière, puis lâche!";
-  sling=null; snap=null; banners=[]; tier=0; ts=1; crashFx=null; cloudDone=false; boostUntil=0; seenBooms=0; hadRocket=false; cataFx={};
+  sling=null; snap=null; banners=[]; tier=0; ts=1; crashFx=null; cloudDone=false; boostUntil=0; seenBooms=0; hadRocket=false; cataFx={}; canonFx={}; seenSplash=0;
   bubble={text:"Tire-nous vers l'arrière!",t:clock,dur:999}; setWind(0); updateHud();
 }
 function startCharge(e){ if(!sim||sim.state!=="ready"||sling) return; e&&e.preventDefault(); ac(); charging=true; chargeT=0; $("btnPush").classList.add("charging"); setPush("Lâche pour lancer!"); say("Prêts?",99); }
@@ -1057,11 +1126,12 @@ const RESULTS={
   loop:["Oups! Tombé du looping","Pour faire le tour, il faut arriver très vite. Mets une grande descente juste avant.",false],
   gap:["Le saut était trop court","Le wagon est tombé dans le trou. Donne-lui plus de vitesse avant le tremplin.",false],
   end:["Le wagon est sorti du rail!","Il est arrivé au bout sans s'arrêter. Ajoute une gare d'arrivée à la fin.",false],
+  canon:["Le canon t'a tiré dans le vide!","Regarde les pointillés en construction : le crochet vert montre où mettre des rails. Change l'angle ou ajoute des rails.",false],
   cata:["Raté! Trop loin pour atterrir","La catapulte lance très loin et très haut. Ajoute plein de rails après pour qu'il retombe dessus.",false],
   fly:["Le wagon s'est envolé!","Il allait tellement vite qu'il a quitté le rail. Ralentis-le avant les bosses.",false],
   hard:["Atterrissage trop dur!","Le wagon est retombé trop fort. Essaie de sauter moins haut.",false]
 };
-const SAY_END={arrive:"Encore! Encore!",back:"Oh non…",stop:"Hé… on n'avance plus!",loop:"Aaaaah!",gap:"Ouuups!",end:"Où est le rail?!",fly:"On voleeee!",hard:"Ayoye!",cata:"Bye bye!"};
+const SAY_END={arrive:"Encore! Encore!",back:"Oh non…",stop:"Hé… on n'avance plus!",loop:"Aaaaah!",gap:"Ouuups!",end:"Où est le rail?!",fly:"On voleeee!",hard:"Ayoye!",cata:"Bye bye!",canon:"Pas de raaaail!"};
 function showResult(){
   const r=RESULTS[sim.result]; const box=$("result");
   box.classList.toggle("good",r[2]); box.classList.toggle("bad",!r[2]);
@@ -1074,6 +1144,7 @@ function showResult(){
   if(sim.result==="arrive") add("Arrivé à la gare");
   if(loops) add(loops>1?`${loops} loopings réussis`:"Looping réussi");
   if(sim.jumps) add(sim.jumps>1?`${sim.jumps} sauts réussis`:"Saut réussi");
+  if(sim.canons) add("Tiré du canon!"); if(sim.splashes) add(sim.splashV>11?"Méga splash!":"Splash!");
   if(sim.catas) add("Catapulté!"); if(sim.booms) add("Fusée explosée!"); if(sim.maxY>26||cloudDone) add("Dans les nuages");
   if(sim.air>=0.5 && sim.result!=="loop") add("Dans les airs!");
   const best=getBest(); if(dist>best){ setBest(dist); if(best>0) add("Nouveau record!","rec"); }
@@ -1130,7 +1201,7 @@ function frame(now){
   }
   shake=Math.max(0,shake-dt*2.2);
   particles.forEach(p=>{ p.vy-=p.g*dt; if(p.kind==="conf"){ p.vx*=.98; p.vy=Math.max(p.vy,-2.5); } if(p.kind==="puff"){ p.vx*=.94; p.vy*=.94; p.r+=dt*.5; }
-    p.x+=p.vx*dt; p.y+=p.vy*dt; p.rot+=p.vr*dt; p.life-=dt; if(p.y<0&&p.kind!=="puff"){ p.y=0; p.vy*=-.3; p.vx*=.6; } });
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.rot+=p.vr*dt; p.life-=dt; if(p.kind==="drop"&&p.vy<0){ const pl=poolAt(T,p.x); if(pl&&p.y<pl.wy) p.life=0; } if(p.y<0&&p.kind!=="puff"){ p.y=0; p.vy*=-.3; p.vx*=.6; } });
   particles=particles.filter(p=>p.life>0);
   render();
   requestAnimationFrame(frame);
@@ -1144,7 +1215,16 @@ function reactions(prevState,dt){
   if(!s.rocket) hadRocket=false;
   if(s.booms>seenBooms){ seenBooms=s.booms; boostUntil=clock+1.4; fireworks(s.px,s.py); shake=Math.max(shake,0.9); banner("BOUM!","o"); say("WOUAAAAH!",1.5);
     noise(.6,.5,2500); tone(110,.5,"sawtooth",.15,.4); [0.15,0.3,0.45].forEach(d=>setTimeout(()=>noise(.25,.3,4000),d*1000)); }
-  if(s.state==="hold"&&prevState!=="hold"){ say("Accroche-toi!",1.2); tone(120,.8,"sawtooth",.06,1.6); }
+  if(s.splashes>seenSplash){ seenSplash=s.splashes; const v=s.splashV, big=v>11, n=Math.round(14+Math.min(60,v*3.2)), pl=poolAt(T,s.px), wy=pl?pl.wy:s.py;
+    for(let i=0;i<n;i++){ const a=Math.PI*(0.12+0.76*Math.random()), sp=(2+Math.random()*4)*(0.6+Math.min(1.6,v/9)); particles.push({kind:"drop",x:s.px+(Math.random()-.5)*1.4,y:wy+0.1,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.8+Math.random()*0.7,max:1.5,r:0.08+Math.random()*0.12,c:Math.random()<0.3?"#FFFFFF":"#7CCBFF",rot:0,vr:0,g:9.8}); }
+    shake=Math.max(shake,big?0.8:0.35); banner(big?"MÉGA SPLASH!":"SPLASH!","b"); say(big?"PLOUUUUF!":"Plouf!",1.4);
+    noise(big?0.9:0.5,big?0.5:0.3,900); noise(0.4,0.2,3000); tone(big?160:240,0.4,"sine",0.15,0.5); }
+  if(s.inWater&&Math.abs(speedOf(s))>2&&Math.random()<0.5){ const pl=poolAt(T,s.px); if(pl) particles.push({kind:"drop",x:s.px-0.6,y:pl.wy+0.05,vx:-Math.sign(s.v||1)*(1+Math.random()*2),vy:2+Math.random()*3,life:0.6,max:0.6,r:0.07+Math.random()*0.07,c:"#BFE9FF",rot:0,vr:0,g:9.8}); }
+  if(s.state==="hold"&&prevState!=="hold"){ if(s.hold&&s.hold.kind==="canon"){ say("On vise… "+Math.round(s.hold.ang*180/Math.PI)+"°!",1.3); tone(90,1.0,"sawtooth",.05,2.2); } else { say("Accroche-toi!",1.2); tone(120,.8,"sawtooth",.06,1.6); } }
+  if(s.state==="air"&&prevState==="hold"&&s.cause==="canon"){ const pi=T.segs[s.i].piece, a=Math.atan2(s.vy,s.vx); canonFx[pi]=clock;
+    for(let i=0;i<22;i++){ const sp=1+Math.random()*4, d=a+(Math.random()-.5)*1.1; particles.push({kind:"puff",x:s.px+Math.cos(a)*2.1,y:s.py+Math.sin(a)*2.1,vx:Math.cos(d)*sp,vy:Math.sin(d)*sp,life:0.7+Math.random()*0.6,max:1.3,r:0.25+Math.random()*0.35,c:C.paper,rot:0,vr:0,g:-1}); }
+    burst(s.px+Math.cos(a)*2.1,s.py+Math.sin(a)*2.1,"star",12); banner("BOUM! CANON!","o"); shake=1; say("WAAAAAAAH!",1.8);
+    noise(0.9,0.6,700); tone(70,0.6,"sawtooth",0.2,0.4); noise(0.3,0.4,4000); lastType=null; return; }
   if(s.state==="air"&&prevState==="hold"){ cataFx[T.segs[s.i].piece]=clock; banner("CATAPULTE!","o"); shake=Math.max(shake,0.9); say("WAAAAAAH!",1.8); tone(180,.6,"triangle",.25,4); noise(.4,.3,1500); lastType=null; return; }
   if(s.state==="elev"&&prevState!=="elev"){ say(s.elev.dir>0?"Ding! On monte!":"Ding! On descend!",2); tone(1320,.25,"sine",.15); tone(1047,.4,"sine",.15,1,.2); return; }
   if(prevState==="elev"&&s.state==="track"){ tone(1047,.25,"sine",.15); tone(1320,.4,"sine",.15,1,.2); }
@@ -1192,6 +1272,8 @@ function render(){
     if(sim.state==="ready"||(snap&&clock-snap.t<0.8)) drawSling(X,Y,ppm,off,"front");
     if(sim.state==="ready"&&!sling&&!charging) drawPullHint(X,Y,ppm);
   }
+  drawPools(X,Y,ppm,"front");
+  if(mode==="build") T.pieces.forEach((pc,pi)=>{ if(isCanon(pc.type)) drawCanonAim(pc,pi,X,Y,ppm); });
   drawCloudBank(X,Y,ppm,1);
   if(crashFx) drawGrave(X,Y,ppm);
   drawParticles(X,Y,ppm);
@@ -1304,13 +1386,86 @@ function tracePath(X,Y,i0,i1,off=0){
     if(off){ const s=T.segs[Math.min(i,T.segs.length-1)]; const sp=(i>0&&T.segs[i-1]&&!T.segs[i-1].gap)?T.segs[i-1]:s; const ss=s.gap?sp:s; const nx=-(ss.sin+sp.sin)/2, ny=(ss.cos+sp.cos)/2; x+=nx*off; y+=ny*off; }
     (i===i0||p.gap)?ctx.moveTo(X(x),Y(y)):ctx.lineTo(X(x),Y(y)); }
 }
+function drawPools(X,Y,ppm,layer){
+  const pts=T.pts;
+  T.pieces.forEach(pc=>{ const pl=pc.pool; if(!pl) return; const a=pc.iStart, b=pc.iEnd;
+    if(X(pc.x1)<-40||X(pc.x0)>W+40) return;
+    if(layer==="back"){
+      if(pc.minY<0.4){ // trou creusé dans le sol
+        ctx.fillStyle="#6E4426"; ctx.strokeStyle=C.ink; ctx.lineWidth=2.5; ctx.beginPath();
+        let started=false; for(let i=a;i<=b;i++){ const q=pts[i]; const yy=Math.min(0,q.y-0.85); const sx=X(q.x+(i===a?-0.5:i===b?0.5:0)); if(!started){ ctx.moveTo(sx,Y(0)); started=true; } ctx.lineTo(sx,Y(yy)); }
+        ctx.lineTo(X(pts[b].x+0.5),Y(0)); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#8A5A34"; for(let k=0;k<6;k++){ const rx=pc.x0+1+hash(k+a)*(pc.x1-pc.x0-2), ry=pc.minY*0.5-0.3+hash(k*3+a)*0.4; if(ry<-0.2){ ctx.beginPath(); ctx.arc(X(rx),Y(ry),Math.max(2,0.07*ppm),0,7); ctx.fill(); } }
+      }
+      // paroi du bassin (tuiles)
+      ctx.fillStyle="#9ED8F5"; ctx.strokeStyle=C.ink; ctx.lineWidth=2.5; ctx.beginPath();
+      let first=true; for(let i=a;i<=b;i++){ const q=pts[i]; if(q.y>pl.wy+0.4) continue; const sx=X(q.x), sy=Y(q.y-0.5); if(first){ ctx.moveTo(sx,Y(pl.wy+0.4)); first=false; } ctx.lineTo(sx,sy); }
+      ctx.lineTo(X(pl.x1+0.3),Y(pl.wy+0.4)); ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else { // l'eau, devant le wagon
+      const wv=t=>Math.sin(clock*3+t*1.7)*0.06;
+      ctx.save(); ctx.beginPath(); let first=true;
+      for(let i=a;i<=b;i++){ const q=pts[i]; if(q.y>pl.wy+0.3) continue; const sx=X(q.x), sy=Y(q.y-0.48); if(first){ ctx.moveTo(sx,sy); first=false; } else ctx.lineTo(sx,sy); }
+      for(let xx=pl.x1+0.25; xx>=pl.x0-0.25; xx-=0.3) ctx.lineTo(X(xx),Y(pl.wy+wv(xx)));
+      ctx.closePath(); ctx.clip();
+      const g=ctx.createLinearGradient(0,Y(pl.wy),0,Y(pl.bot-0.6)); g.addColorStop(0,"rgba(72,185,248,.78)"); g.addColorStop(1,"rgba(22,110,220,.86)");
+      ctx.fillStyle=g; ctx.fillRect(X(pl.x0-1),Y(pl.wy+0.4),(pl.x1-pl.x0+2)*ppm,(pl.wy-pl.bot+1.6)*ppm);
+      ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=2; for(let k=0;k<4;k++){ const yy=pl.wy-0.45-k*0.55, xo=((clock*0.6+k*0.37)%1)*2; ctx.beginPath(); for(let xx=pl.x0-2+xo; xx<pl.x1+1; xx+=2){ ctx.moveTo(X(xx),Y(yy)); ctx.lineTo(X(xx+0.7),Y(yy)); } ctx.stroke(); }
+      ctx.restore();
+      ctx.strokeStyle="#E9F8FF"; ctx.lineWidth=Math.max(3,0.1*ppm); ctx.lineCap="round"; ctx.beginPath();
+      for(let xx=pl.x0-0.1; xx<=pl.x1+0.1; xx+=0.3){ const yy=pl.wy+wv(xx); xx<=pl.x0?ctx.moveTo(X(xx),Y(yy)):ctx.lineTo(X(xx),Y(yy)); } ctx.stroke();
+    }
+  });
+}
+let canonFx={};
+function canonAngleNow(pc,pi){
+  const tgt=canonAng(pc.type)*Math.PI/180;
+  if(mode==="build") return tgt;
+  if(sim&&sim.state==="hold"&&sim.hold&&sim.hold.kind==="canon"&&sim.hold.piece===pi) return sim.ang;
+  const f=canonFx[pi]; if(f!=null){ const t=clock-f; if(t<1.2) return tgt; if(t<2.4){ const k=(t-1.2)/1.2; return tgt*(1-k*k*(3-2*k)); } }
+  return 0;
+}
+function drawCanon(pc,pi,X,Y,ppm){
+  const P=T.pts[pc.iStart+CANON_I], a=canonAngleNow(pc,pi), px=X(P.x), py=Y(P.y);
+  // affût
+  ctx.fillStyle=C.rail; ctx.strokeStyle=C.ink; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(px-1.3*ppm,py+0.95*ppm); ctx.lineTo(px+1.3*ppm,py+0.95*ppm); ctx.lineTo(px+0.6*ppm,py+0.1*ppm); ctx.lineTo(px-0.6*ppm,py+0.1*ppm); ctx.closePath(); ctx.fill(); ctx.stroke();
+  [-0.85,0.85].forEach(dx=>{ const wx=px+dx*ppm, wy=py+0.95*ppm, r=0.42*ppm; ctx.fillStyle=C["wood-dark"]; ctx.beginPath(); ctx.arc(wx,wy,r,0,7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=C.cart; ctx.beginPath(); ctx.arc(wx,wy,r*0.35,0,7); ctx.fill(); ctx.stroke(); });
+  // tube
+  let rec=0; const f=canonFx[pi]; if(f!=null&&mode!=="build"){ const t=clock-f; if(t<0.35) rec=Math.sin(t/0.35*Math.PI)*0.45; }
+  ctx.save(); ctx.translate(px,py); ctx.rotate(-a); ctx.translate(-rec*ppm,0);
+  const x0=-0.6*ppm, x1=3.0*ppm, y0=-1.75*ppm, y1=0.25*ppm;
+  const g=ctx.createLinearGradient(0,y0,0,y1); g.addColorStop(0,"#5D74A8"); g.addColorStop(0.45,"#3A4C78"); g.addColorStop(1,"#1F2B4F");
+  ctx.fillStyle=g; ctx.strokeStyle=C.ink; ctx.lineWidth=3; rr(x0,y0,x1-x0,y1-y0,0.35*ppm); ctx.fill(); ctx.stroke();
+  ctx.fillStyle=C.cart; [0.2,1.6].forEach(bx=>{ ctx.fillRect(bx*ppm,y0,0.28*ppm,y1-y0); ctx.strokeRect(bx*ppm,y0,0.28*ppm,y1-y0); });
+  ctx.fillStyle="#1F2B4F"; ctx.beginPath(); ctx.ellipse(x1,(y0+y1)/2,0.3*ppm,(y1-y0)/2+0.15*ppm,0,0,7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle="#0B1638"; ctx.beginPath(); ctx.ellipse(x1+0.05*ppm,(y0+y1)/2,0.16*ppm,(y1-y0)/2-0.1*ppm,0,0,7); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle=C.cart; ctx.strokeStyle=C.ink; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(px,py,Math.max(5,0.22*ppm),0,7); ctx.fill(); ctx.stroke();
+}
+function drawCanonAim(pc,pi,X,Y,ppm){ // étiquette d'angle + pointillés, par-dessus l'eau
+  const P=T.pts[pc.iStart+CANON_I], a=canonAng(pc.type)*Math.PI/180, px=X(P.x), py=Y(P.y);
+  {
+    const pr=predictCanon(T,pi);
+    ctx.fillStyle="rgba(255,255,255,.95)"; pr.pts.forEach((q,k)=>{ if(k%4) return; const sx=X(q[0]), sy=Y(q[1]); if(sx<-10||sx>W+10) return; ctx.beginPath(); ctx.arc(sx,sy,Math.max(2.5,0.09*ppm),0,7); ctx.fill(); });
+    const L=pr.pts[pr.pts.length-1], lx=X(L[0]), ly=Y(L[1])-Math.max(16,0.5*ppm), r=Math.max(13,0.42*ppm);
+    ctx.fillStyle=pr.land?C.ok:C.danger; ctx.strokeStyle=C.ink; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(lx,ly,r,0,7); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle=C.paper; ctx.lineWidth=Math.max(3,r*0.25); ctx.lineCap="round"; ctx.beginPath();
+    if(pr.land){ ctx.moveTo(lx-r*0.45,ly); ctx.lineTo(lx-r*0.1,ly+r*0.35); ctx.lineTo(lx+r*0.45,ly-r*0.35); } else { ctx.moveTo(lx-r*0.38,ly-r*0.38); ctx.lineTo(lx+r*0.38,ly+r*0.38); ctx.moveTo(lx+r*0.38,ly-r*0.38); ctx.lineTo(lx-r*0.38,ly+r*0.38); }
+    ctx.stroke();
+    const tx=px+Math.cos(a)*3.6*ppm, ty=py-Math.sin(a)*3.6*ppm-0.6*ppm, fs=Math.max(13,0.5*ppm); ctx.font=`${fs}px ${FD}`; const lab=canonAng(pc.type)+"°", tw=ctx.measureText(lab).width+fs*0.9;
+    ctx.fillStyle=C.cart; ctx.strokeStyle=C.ink; ctx.lineWidth=2.5; rr(tx-tw/2,ty-fs*0.75,tw,fs*1.5,fs*0.5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=C.ink; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(lab,tx,ty+fs*0.06);
+  }
+}
 function drawTrack(X,Y,ppm){
   const pts=T.pts, rw=Math.max(4,0.2*ppm), n=pts.length, gy=Y(0);
+  drawPools(X,Y,ppm,"back");
   // poteaux et croisillons
   ctx.lineCap="butt";
   let lastB=null, prev=null;
   for(let i=0;i<n;i++){
-    const p=pts[i], s=T.segs[Math.min(i,T.segs.length-1)]; if(!s||s.cos<0.7){ prev=null; continue; }
+    const p=pts[i], s=T.segs[Math.min(i,T.segs.length-1)]; if(!s||s.cos<0.7||p.y<0.6||T.pieces[p.piece].pool){ prev=null; continue; }
     const b=Math.floor(p.x/1.8); if(b===lastB) continue; lastB=b;
     const sx=X(p.x), top=Y(p.y-0.3);
     if(sx>-40&&sx<W+40){
@@ -1355,6 +1510,7 @@ function drawTrack(X,Y,ppm){
 
     if(p.type==="ascenseur") drawElevator(p,pi,X,Y,ppm);
     if(p.type==="catapulte") drawCatapult(p,pi,X,Y,ppm);
+    if(isCanon(p.type)) drawCanon(p,pi,X,Y,ppm);
     if(p.type==="fusee"){ const used=sim&&sim.used&&sim.used[pi]; for(let k=0;k<(used?2:3);k++){ const rx=X(p.x0+0.8+k*0.7), ry=Y(p.y0-0.35); const rh=0.9*ppm, rw=0.24*ppm;
         ctx.fillStyle=k%2?C.accent:C.rail; ctx.strokeStyle=C.ink; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(rx-rw/2,ry); ctx.lineTo(rx-rw/2,ry-rh); ctx.lineTo(rx,ry-rh-rw*1.2); ctx.lineTo(rx+rw/2,ry-rh); ctx.lineTo(rx+rw/2,ry); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.fillStyle=C.paper; ctx.fillRect(rx-rw/2+1,ry-rh*0.6,rw-2,rh*0.15); } }
@@ -1688,6 +1844,7 @@ function drawParticles(X,Y,ppm){
     if(p.kind==="star"){ ctx.save(); ctx.translate(x,y); ctx.rotate(p.rot); ctx.fillStyle=p.c; ctx.strokeStyle=C.ink; ctx.lineWidth=1.5; ctx.beginPath();
       for(let k=0;k<10;k++){ const rad=k%2?r*0.45:r; ctx.lineTo(Math.cos(k*Math.PI/5)*rad,Math.sin(k*Math.PI/5)*rad); } ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
     else if(p.kind==="conf"){ ctx.save(); ctx.translate(x,y); ctx.rotate(p.rot); ctx.fillStyle=p.c; ctx.fillRect(-r,-r*0.5,r*2,r*Math.abs(Math.cos(p.rot*2))+1); ctx.restore(); }
+    else if(p.kind==="drop"){ ctx.fillStyle=p.c; ctx.strokeStyle="rgba(11,22,56,.35)"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(x,y,Math.max(2,r),0,7); ctx.fill(); ctx.stroke(); }
     else if(p.kind==="fw"){ ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(x,y,Math.max(2,r),0,7); ctx.fill(); ctx.globalAlpha=a*0.3; ctx.beginPath(); ctx.arc(x,y,Math.max(5,r*2.6),0,7); ctx.fill(); }
     else if(p.kind==="spark"){ ctx.strokeStyle=p.c; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-p.vx*0.03*ppm,y+p.vy*0.03*ppm); ctx.stroke(); }
     else { ctx.fillStyle=p.c; ctx.strokeStyle="rgba(29,39,66,.25)"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill(); ctx.stroke(); } });
