@@ -381,6 +381,7 @@ const DEF = {
   catapulte:{name:"Catapulte", hint:"Le bras attrape le wagon et le lance très haut et très loin!"},
   ascenseur:{name:"Ascenseur", hint:"Une cabine monte le wagon de 10 m tout droit."},
   fusee:{name:"Fusée", hint:"Accroche une fusée au wagon : BOUM après 5 secondes, et ça donne un gros coup de vitesse!"},
+  trampoline:{name:"Trampoline", hint:"Le wagon tombe sur la toile et BOING! Mets plein de rails après pour qu'il atterrisse."},
   bassin:{name:"Bassin", hint:"Le rail plonge dans l'eau : SPLASH! Plus tu arrives vite, plus ça éclabousse."},
   canon:{name:"Canon", hint:"Le canon pivote et tire le wagon. Choisis l'angle!"},
   canon30:{name:"Canon 30°", hint:"Tir bas et loin. Regarde les pointillés : ils montrent où le wagon va tomber."},
@@ -396,6 +397,7 @@ const ORDER = ["plat","monte","descend","gmonte","gdesc","bosse","creux","chaine
 const EXAMPLE = ["station","plat","chaine","gdesc","looping","plat","turbo","tremplin","plat","bosse","descend","freins"];
 const PRESETS = [
   {id:"petit", name:"Le P'tit Train", level:"Facile", desc:"Des petites bosses tranquilles. Parfait pour commencer.", list:["station","plat","chaine","descend","plat","bosse","descend","creux","plat","freins"]},
+  {id:"boing", name:"Le Boing-Boing", level:"Facile", desc:"Deux trampolines : BOING… BOING!", list:["station","plat","chaine","descend","trampoline","plat","plat","plat","plat","plat","trampoline","plat","plat","plat","plat","plat","freins"]},
   {id:"loop", name:"Le Grand Looping", level:"Moyen", desc:"Une grosse descente, un looping et un saut par-dessus le trou.", list:EXAMPLE},
   {id:"plouf", name:"Le Grand Plouf", level:"Moyen", desc:"Un bassin, puis un canon qui te tire direct dans un deuxième bassin. SPLASH!", list:["station","plat","chaine","gdesc","bassin","plat","canon45","plat","plat","plat","plat","plat","bassin","plat","plat","freins"]},
   {id:"machine", name:"La Machine Folle", level:"Extrême", desc:"Ascenseur, fusée et catapulte : le wagon vole jusqu'aux nuages!", list:["station","plat","ascenseur","plat","gdesc","looping","plat","fusee","plat","mchaine","plat","catapulte","plat","plat","plat","plat","plat","plat","plat","plat","plat","mdesc","plat","gdesc","plat","freins"]},
@@ -419,6 +421,7 @@ function gen(type){
     case "mdesc": return smooth(11,-15,150);
     case "catapulte": return smooth(5,0,25);
     case "fusee": return smooth(3,0,15);
+    case "trampoline": { const a=smooth(2,0,10); a.push([10,0,1]); for(let i=1;i<=10;i++) a.push([10+2*i/10,0,0]); return a; }
     case "bassin": { const a=smooth(4,-3,40); for(let i=1;i<=12;i++) a.push([4+2.4*i/12,-3,0]); smooth(4,2,40).slice(1).forEach(q=>a.push([6.4+q[0],-3+q[1],0])); return a; }
     case "ascenseur": { const a=[]; for(let i=0;i<=15;i++) a.push([3*i/15,0,0]); a.push([3,10,1]); for(let i=1;i<=15;i++) a.push([3+3*i/15,10,0]); return a; }
     case "gdesc": return smooth(6,-5,70);
@@ -459,11 +462,12 @@ function buildTrack(list){
       minY=Math.min(minY,py); maxY=Math.max(maxY,py); minX=Math.min(minX,px); maxX=Math.max(maxX,px);
     });
     const last=pts[pts.length-1];
-    let pool=null;
+    let pool=null, mat=null;
+    if(type==="trampoline") mat={x0:x+2.1,x1:x+9.4,y:Math.max(0.7,y-3)};
     if(type==="bassin"){ const wy=y-1.75; let xa=Infinity, xb=-Infinity;
       for(let i=iStart;i<pts.length;i++){ if(pts[i].y<wy){ xa=Math.min(xa,pts[i].x); xb=Math.max(xb,pts[i].x); } }
       pool={wy,x0:xa-0.25,x1:xb+0.25,bot:minY}; }
-    pieces.push({type,x0:x,y0:y,x1:last.x,y1:last.y,iStart,iEnd:pts.length-1,minY,maxY,minX,maxX,pool,
+    pieces.push({type,x0:x,y0:y,x1:last.x,y1:last.y,iStart,iEnd:pts.length-1,minY,maxY,minX,maxX,pool,mat,
       bad: minY<(type==="bassin"?-3.6:0.4) ? "low" : (maxY>90 ? "high" : "")});
     x=last.x; y=last.y;
   });
@@ -488,7 +492,7 @@ function buildTrack(list){
       if(!buckets.has(bx)) buckets.set(bx,[]); buckets.get(bx).push(i);
     }
   });
-  return {list,pts,segs,pieces,buckets,pools:pieces.filter(p=>p.pool).map(p=>p.pool),bad:pieces.some(p=>p.bad),endX:x};
+  return {list,pts,segs,pieces,buckets,pools:pieces.filter(p=>p.pool).map(p=>p.pool),mats:pieces.map((p,i)=>p.mat?Object.assign({piece:i},p.mat):null).filter(Boolean),bad:pieces.some(p=>p.bad),endX:x};
 }
 function poolAt(T,x){ for(const p of T.pools) if(x>=p.x0&&x<=p.x1) return p; return null; }
 function floorAt(T,x){ const p=poolAt(T,x); return p?Math.min(0,p.bot-0.3):0; }
@@ -526,7 +530,7 @@ function predictCanon(T,pi){
 const START_I = 8;
 function newSim(T){
   const p=T.pts[START_I];
-  return {rocket:null,booms:0,used:{},hold:null,elev:null,catas:0,lifts:0,canons:0,splashes:0,splashV:0,inWater:false,T,state:"ready",i:START_I,u:0,v:0,px:p.x,py:p.y,vx:0,vy:0,ang:0,spin:0,t:0,launchT:0,
+  return {rocket:null,booms:0,used:{},hold:null,elev:null,catas:0,lifts:0,canons:0,splashes:0,splashV:0,inWater:false,boings:0,boingPiece:-1,T,state:"ready",i:START_I,u:0,v:0,px:p.x,py:p.y,vx:0,vy:0,ang:0,spin:0,t:0,launchT:0,
     startX:p.x,maxX:p.x,maxV:0,air:0,cause:"",lastGain:0,still:0,jumps:0,maxPiece:0,result:null,noLand:false};
 }
 function trackPos(S){ const a=S.T.pts[S.i], b=S.T.pts[S.i+1]; return {x:a.x+(b.x-a.x)*S.u, y:a.y+(b.y-a.y)*S.u}; }
@@ -611,7 +615,7 @@ function step(S,dt){
     if(ev==="gap"){
       const gs = S.v>0 ? T.segs[S.i+1] : T.segs[S.i-1];
       if(gs && gs.type==="ascenseur"){ startElev(S, S.v>0?1:-1); return; }
-      launch(S,"gap",false); return; }
+      launch(S, T.segs[S.i].type==="trampoline"?"tramp":"gap", false); return; }
     if(ev==="start") return finish(S,"back");
     const p=trackPos(S); S.px=p.x; S.py=p.y; S.ang=T.segs[S.i].phi;
     S.maxV=Math.max(S.maxV,Math.abs(S.v));
@@ -627,6 +631,8 @@ function step(S,dt){
     S.vy-=G*dt; S.px+=S.vx*dt; S.py+=S.vy*dt; S.air+=dt;
     const apl=poolAt(T,S.px);
     if(apl&&S.py<apl.wy){ if(!S.inWater){ S.splashes++; S.splashV=Math.hypot(S.vx,S.vy); } S.inWater=true; const f=Math.exp(-2.2*dt); S.vx*=f; S.vy*=f; } else S.inWater=false;
+    if(S.vy<0) for(const m of T.mats){ if(S.px>=m.x0&&S.px<=m.x1&&oy>=m.y&&S.py<m.y){
+      S.py=m.y; S.vy=Math.max(11,-S.vy*0.9); S.vx=Math.max(2.5,S.vx*0.95); S.cause="boing"; S.launchT=S.t; S.boings++; S.boingPiece=m.piece; S.lastGain=S.t; break; } }
     S.maxV=Math.max(S.maxV,Math.hypot(S.vx,S.vy));
     if(S.px>S.maxX) S.maxX=S.px;
     if(S.noLand){ S.spin+=dt*5; S.ang+=dt*5; }
@@ -638,12 +644,12 @@ function step(S,dt){
         if(h){ const g=h.g, vn=-S.vx*g.sin+S.vy*g.cos, vt=S.vx*g.cos+S.vy*g.sin;
           if(vn<-18){ S.px=h.cx; S.py=h.cy; return finish(S,"hard"); }
           S.state="track"; S.i=h.i; S.u=Math.min(1,Math.max(0,h.u)); S.v=vt*0.97; S.ang=g.phi;
-          if(S.cause==="gap"||S.cause==="cata"||S.cause==="canon") S.jumps++;
+          if(["gap","cata","canon","boing"].includes(S.cause)) S.jumps++;
           S.lastGain=S.t; return; }
       }
     }
     const fl=floorAt(T,S.px);
-    if(S.py<=fl){ S.py=fl; const map={loop:"loop",gap:"gap",end:"end",lift:"fly",cata:"cata",canon:"canon"}; return finish(S,map[S.cause]||"fly"); }
+    if(S.py<=fl){ S.py=fl; const map={loop:"loop",gap:"gap",end:"end",lift:"fly",cata:"cata",canon:"canon",tramp:"tramp",boing:"boing"}; return finish(S,map[S.cause]||"fly"); }
     if(S.t>120) return finish(S,"stop");
   }
 }
@@ -783,6 +789,7 @@ function drawPreview(c,lst){
   x.lineCap="round"; x.lineJoin="round";
   path(); x.strokeStyle=C.ink; x.lineWidth=Math.max(4,sc*0.4); x.stroke();
   path(); x.strokeStyle=C.rail; x.lineWidth=Math.max(2.5,sc*0.25); x.stroke();
+  TT.pieces.forEach(pc=>{ if(!pc.mat) return; const [a,b]=P(pc.mat.x0,pc.mat.y), [a2]=P(pc.mat.x1,0); x.fillStyle="#2F86F6"; x.strokeStyle=C.ink; x.lineWidth=1.5; x.fillRect(a,b,a2-a,Math.max(3,sc*0.3)); x.strokeRect(a,b,a2-a,Math.max(3,sc*0.3)); });
   TT.pieces.forEach(pc=>{ if(!pc.pool) return; const pl=pc.pool; x.fillStyle="rgba(72,185,248,.85)"; x.beginPath(); let f=true;
     for(let i=pc.iStart;i<=pc.iEnd;i++){ const q=TT.pts[i]; if(q.y>pl.wy) continue; const [a,b]=P(q.x,q.y-0.3); f?x.moveTo(a,b):x.lineTo(a,b); f=false; }
     const [a1,b1]=P(pl.x1,pl.wy), [a0]=P(pl.x0,pl.wy); x.lineTo(a1,b1); x.lineTo(a0,b1); x.closePath(); x.fill(); });
@@ -886,7 +893,7 @@ function showPiece(p){ const view=W/cam.ppm; if(p.maxX+5>cam.tx+view) cam.tx=p.m
 function clampCam(){ const view=W/cam.ppm, vh=H/cam.ppm; cam.tx=Math.max(-4,Math.min(cam.tx,Math.max(-1.5,T.endX+6-view))); cam.ty=Math.max(-1.2,Math.min(cam.ty??-1.2,Math.max(-1.2,trackTop()+7-vh))); }
 
 /* ---------- Inventaire ---------- */
-const GROUPS=[["Rails","--g-rails",["plat","monte","descend","bosse","creux"]],["Grandes pentes","--g-pentes",["gmonte","gdesc","chaine","mchaine","mdesc"]],["Spectaculaire","--g-spec",["looping","tremplin","turbo","bassin"]],["Machines","--g-mach",["catapulte","ascenseur","fusee","canon"]],["La fin","--g-fin",["freins"]]];
+const GROUPS=[["Rails","--g-rails",["plat","monte","descend","bosse","creux"]],["Grandes pentes","--g-pentes",["gmonte","gdesc","chaine","mchaine","mdesc"]],["Spectaculaire","--g-spec",["looping","tremplin","turbo","bassin","trampoline"]],["Machines","--g-mach",["catapulte","ascenseur","fusee","canon"]],["La fin","--g-fin",["freins"]]];
 const GICON={
  "Rails":'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M3 18a9 9 0 0 1 18 0"/></svg>',
  "Grandes pentes":'<svg viewBox="0 0 24 24" fill="currentColor" stroke="#0B1638" stroke-width="1.5" stroke-linejoin="round"><path d="M2 20l7-13 4 6 2-3 7 10z"/><path d="M9 7l2 3-2-1-1 1z" fill="#fff"/></svg>',
@@ -906,6 +913,9 @@ function drawIcon(c,type){
   if(isChain(type)){ x.strokeStyle=C.ink; x.lineWidth=3; for(let i=4;i<g.length-4;i+=7){ const a=g[i-2],b=g[i+2]; let tx=(b[0]-a[0]),ty=-(b[1]-a[1]); const l=Math.hypot(tx,ty)||1; tx/=l; ty/=l; const X0=ox+g[i][0]*sc, Y0=oy-g[i][1]*sc; x.beginPath(); x.moveTo(X0-ty*7,Y0+tx*7); x.lineTo(X0+ty*7,Y0-tx*7); x.stroke(); } }
   if(type==="freins"){ path(); x.setLineDash([6,6]); x.strokeStyle=C.ink; x.lineWidth=5; x.stroke(); x.setLineDash([]); }
   if(type==="ascenseur"){ x.strokeStyle=C.ink; x.lineWidth=3; x.setLineDash([4,4]); x.beginPath(); x.moveTo(w/2,h-12); x.lineTo(w/2,12); x.stroke(); x.setLineDash([]); x.fillStyle=C.cart; x.fillRect(w/2-9,h/2-8,18,16); x.strokeRect(w/2-9,h/2-8,18,16); }
+  if(type==="trampoline"){ const my=h-12, a=w*0.36, b=w*0.86; x.strokeStyle=C.ink; x.lineWidth=3; x.beginPath(); x.moveTo(a+4,my); x.lineTo(a+4,h-2); x.moveTo(b-4,my); x.lineTo(b-4,h-2); x.stroke();
+    x.fillStyle="#2F86F6"; x.fillRect(a-3,my-4,b-a+6,7); x.strokeRect(a-3,my-4,b-a+6,7); x.strokeStyle=C.cart; x.lineWidth=3; x.beginPath(); x.moveTo(a+8,my-6); x.quadraticCurveTo((a+b)/2,my+4,b-8,my-6); x.stroke();
+    x.strokeStyle=C.ink; x.lineWidth=2; x.beginPath(); x.moveTo((a+b)/2-8,my-14); x.lineTo((a+b)/2-12,my-22); x.moveTo((a+b)/2,my-14); x.lineTo((a+b)/2,my-24); x.moveTo((a+b)/2+8,my-14); x.lineTo((a+b)/2+12,my-22); x.stroke(); }
   if(type==="bassin"){ x.save(); x.beginPath(); g.forEach((p,i)=>{ const X=ox+p[0]*sc, Y=oy-p[1]*sc; i?x.lineTo(X,Y):x.moveTo(X,Y); }); x.closePath();
     x.clip(); x.fillStyle="rgba(40,150,240,.75)"; x.fillRect(0,oy+1.75*sc,w,h); x.restore(); x.strokeStyle="#BFE9FF"; x.lineWidth=2.5; x.beginPath(); x.moveTo(ox+0.9*sc,oy+1.75*sc); x.lineTo(ox+9.6*sc,oy+1.75*sc); x.stroke(); }
   if(type==="canon"||isCanon(type)){ const a=(type==="canon"?45:canonAng(type))*Math.PI/180, px=w*0.36, py=h-14;
@@ -1030,7 +1040,7 @@ function toast(msg,warn){ const t=$("toast"); t.textContent=msg; t.classList.tog
 /* ---------- Toucher la scène ---------- */
 let drag=null;
 function hitAt(sx,sy){ for(let k=hits.length-1;k>=0;k--){ const h=hits[k]; if(h.rect){ const [x,y,w,hh]=h.rect; if(sx>=x&&sx<=x+w&&sy>=y&&sy<=y+hh) return h; } else if(Math.hypot(h.x-sx,h.y-sy)<=h.r) return h; } return null; }
-let sling=null, snap=null, banners=[], tier=0, ts=1, crashFx=null, cloudDone=false, boostUntil=0, seenBooms=0, hadRocket=false, seenSplash=0;
+let sling=null, snap=null, banners=[], tier=0, ts=1, crashFx=null, cloudDone=false, boostUntil=0, seenBooms=0, hadRocket=false, seenSplash=0, seenBoing=0, lastBoing=-9;
 cv.addEventListener("pointerdown",e=>{
   if(mode==="test"){ if(sim&&sim.state==="ready"&&!charging){ ac(); sling={x:e.clientX,y:e.clientY,pull:0,step:0}; try{ cv.setPointerCapture(e.pointerId); }catch(_){} say("Tire! Tire!",99); } return; }
   if(mode!=="build") return; ac(); drag={x:e.clientX,y:e.clientY,cx:cam.tx,cy:cam.ty,moved:false}; try{ cv.setPointerCapture(e.pointerId); }catch(_){} });
@@ -1088,7 +1098,7 @@ function resetCart(){
   cam.ppm=Math.max(22,Math.min(46,H/10.5)); cam.x=sim.px-W*0.3/cam.ppm; cam.y=-1.2; shake=0; lastType="station"; lastState="ready"; chainAcc=0;
   const b=$("btnPush"); b.disabled=false; setPush("Ou tiens ce bouton");
   $("launchHint").classList.remove("go"); $("launchHint").querySelector("span").textContent="Tire le wagon vers l'arrière, puis lâche!";
-  sling=null; snap=null; banners=[]; tier=0; ts=1; crashFx=null; cloudDone=false; boostUntil=0; seenBooms=0; hadRocket=false; cataFx={}; canonFx={}; seenSplash=0;
+  sling=null; snap=null; banners=[]; tier=0; ts=1; crashFx=null; cloudDone=false; boostUntil=0; seenBooms=0; hadRocket=false; cataFx={}; canonFx={}; seenSplash=0; seenBoing=0; trampFx={};
   bubble={text:"Tire-nous vers l'arrière!",t:clock,dur:999}; setWind(0); updateHud();
 }
 function startCharge(e){ if(!sim||sim.state!=="ready"||sling) return; e&&e.preventDefault(); ac(); charging=true; chargeT=0; $("btnPush").classList.add("charging"); setPush("Lâche pour lancer!"); say("Prêts?",99); }
@@ -1126,13 +1136,16 @@ const RESULTS={
   loop:["Oups! Tombé du looping","Pour faire le tour, il faut arriver très vite. Mets une grande descente juste avant.",false],
   gap:["Le saut était trop court","Le wagon est tombé dans le trou. Donne-lui plus de vitesse avant le tremplin.",false],
   end:["Le wagon est sorti du rail!","Il est arrivé au bout sans s'arrêter. Ajoute une gare d'arrivée à la fin.",false],
+  tramp:["Raté le trampoline!","Le wagon est passé à côté de la toile. S'il allait trop vite, il a volé par-dessus : mets une montée avant pour le ralentir.",false],
+  boing:["Rebondi dans le vide!","Le trampoline lance haut et loin. Ajoute plein de rails après pour que le wagon retombe dessus.",false],
   canon:["Le canon t'a tiré dans le vide!","Regarde les pointillés en construction : le crochet vert montre où mettre des rails. Change l'angle ou ajoute des rails.",false],
   cata:["Raté! Trop loin pour atterrir","La catapulte lance très loin et très haut. Ajoute plein de rails après pour qu'il retombe dessus.",false],
   fly:["Le wagon s'est envolé!","Il allait tellement vite qu'il a quitté le rail. Ralentis-le avant les bosses.",false],
   hard:["Atterrissage trop dur!","Le wagon est retombé trop fort. Essaie de sauter moins haut.",false]
 };
-const SAY_END={arrive:"Encore! Encore!",back:"Oh non…",stop:"Hé… on n'avance plus!",loop:"Aaaaah!",gap:"Ouuups!",end:"Où est le rail?!",fly:"On voleeee!",hard:"Ayoye!",cata:"Bye bye!",canon:"Pas de raaaail!"};
+const SAY_END={arrive:"Encore! Encore!",back:"Oh non…",stop:"Hé… on n'avance plus!",loop:"Aaaaah!",gap:"Ouuups!",end:"Où est le rail?!",fly:"On voleeee!",hard:"Ayoye!",cata:"Bye bye!",canon:"Pas de raaaail!",tramp:"Ouuups!",boing:"Trop loin!"};
 function showResult(){
+  if(!sim||!sim.result||mode!=="test") return;
   const r=RESULTS[sim.result]; const box=$("result");
   box.classList.toggle("good",r[2]); box.classList.toggle("bad",!r[2]);
   $("resTitle").textContent=r[0]; $("resMsg").textContent=r[1];
@@ -1144,6 +1157,7 @@ function showResult(){
   if(sim.result==="arrive") add("Arrivé à la gare");
   if(loops) add(loops>1?`${loops} loopings réussis`:"Looping réussi");
   if(sim.jumps) add(sim.jumps>1?`${sim.jumps} sauts réussis`:"Saut réussi");
+  if(sim.boings) add(sim.boings>1?`${sim.boings} rebonds!`:"Boing!");
   if(sim.canons) add("Tiré du canon!"); if(sim.splashes) add(sim.splashV>11?"Méga splash!":"Splash!");
   if(sim.catas) add("Catapulté!"); if(sim.booms) add("Fusée explosée!"); if(sim.maxY>26||cloudDone) add("Dans les nuages");
   if(sim.air>=0.5 && sim.result!=="loop") add("Dans les airs!");
@@ -1215,6 +1229,9 @@ function reactions(prevState,dt){
   if(!s.rocket) hadRocket=false;
   if(s.booms>seenBooms){ seenBooms=s.booms; boostUntil=clock+1.4; fireworks(s.px,s.py); shake=Math.max(shake,0.9); banner("BOUM!","o"); say("WOUAAAAH!",1.5);
     noise(.6,.5,2500); tone(110,.5,"sawtooth",.15,.4); [0.15,0.3,0.45].forEach(d=>setTimeout(()=>noise(.25,.3,4000),d*1000)); }
+  if(s.boings>seenBoing){ seenBoing=s.boings; const m=T.mats.find(q=>q.piece===s.boingPiece); trampFx[s.boingPiece]={t:clock,x:s.px,p:1};
+    banner(s.boings>1&&clock-lastBoing<4?"BOING BOING!":"BOING!","y"); lastBoing=clock; say(["Wiiiii!","Boiiing!","Encore!"][s.boings%3],1.2); shake=Math.max(shake,0.4);
+    tone(150,0.5,"sine",0.25,4.5); tone(300,0.35,"triangle",0.1,3,0.05); if(m) burst(s.px,m.y+0.2,"star",8); }
   if(s.splashes>seenSplash){ seenSplash=s.splashes; const v=s.splashV, big=v>11, n=Math.round(14+Math.min(60,v*3.2)), pl=poolAt(T,s.px), wy=pl?pl.wy:s.py;
     for(let i=0;i<n;i++){ const a=Math.PI*(0.12+0.76*Math.random()), sp=(2+Math.random()*4)*(0.6+Math.min(1.6,v/9)); particles.push({kind:"drop",x:s.px+(Math.random()-.5)*1.4,y:wy+0.1,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.8+Math.random()*0.7,max:1.5,r:0.08+Math.random()*0.12,c:Math.random()<0.3?"#FFFFFF":"#7CCBFF",rot:0,vr:0,g:9.8}); }
     shake=Math.max(shake,big?0.8:0.35); banner(big?"MÉGA SPLASH!":"SPLASH!","b"); say(big?"PLOUUUUF!":"Plouf!",1.4);
@@ -1416,6 +1433,28 @@ function drawPools(X,Y,ppm,layer){
     }
   });
 }
+let trampFx={};
+function drawTrampoline(pc,pi,X,Y,ppm){
+  const m=pc.mat, x0=X(m.x0), x1=X(m.x1), y=Y(m.y), gy=Y(0);
+  if(x1<-40||x0>W+40) return;
+  // pattes
+  ctx.lineCap="round"; [m.x0+0.3,m.x0+(m.x1-m.x0)/3,m.x1-(m.x1-m.x0)/3,m.x1-0.3].forEach((lx,k)=>{ const sx=X(lx);
+    ctx.strokeStyle=C.ink; ctx.lineWidth=Math.max(5,0.2*ppm)+2; ctx.beginPath(); ctx.moveTo(sx,y); ctx.lineTo(sx+(k<2?-1:1)*0.25*ppm,gy); ctx.stroke();
+    ctx.strokeStyle=C.steel; ctx.lineWidth=Math.max(5,0.2*ppm); ctx.stroke(); });
+  // toile qui s'enfonce puis vibre
+  let dip=0, cx=(x0+x1)/2; const f=trampFx[pi];
+  if(f&&mode!=="build"){ const t=clock-f.t; if(t<1.4){ dip=Math.sin(t*22)*Math.exp(-t*4.5)*0.9*f.p; cx=X(f.x); } }
+  if(sim&&mode!=="build"&&sim.state==="air"&&sim.vy<0&&sim.px>m.x0&&sim.px<m.x1&&sim.py<m.y+0.9&&sim.py>m.y){ dip=Math.max(dip,(m.y+0.9-sim.py)*0.9); cx=X(sim.px); }
+  ctx.fillStyle="#1F2B4F"; ctx.strokeStyle=C.ink; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(x0+0.25*ppm,y); ctx.quadraticCurveTo(cx,y+dip*2*ppm,x1-0.25*ppm,y); ctx.lineTo(x1-0.25*ppm,y-0.12*ppm); ctx.quadraticCurveTo(cx,y+dip*2*ppm-0.12*ppm,x0+0.25*ppm,y-0.12*ppm); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // ressorts
+  ctx.strokeStyle="#C9D4E8"; ctx.lineWidth=1.5; for(let k=0;k<10;k++){ const t=(k+0.5)/10, sx=x0+0.25*ppm+t*(x1-x0-0.5*ppm); const dy=dip*2*ppm*4*t*(1-t); ctx.beginPath(); ctx.moveTo(sx,y-0.06*ppm+dy); ctx.lineTo(sx,y+0.18*ppm); ctx.stroke(); }
+  // cadre rembourré bleu et jaune
+  const segs=8, fw=(x1-x0)/segs; for(let k=0;k<segs;k++){ ctx.fillStyle=k%2?C.cart:"#2F86F6"; ctx.strokeStyle=C.ink; ctx.lineWidth=2;
+    rr(x0+k*fw,y+0.12*ppm,fw,0.32*ppm,Math.min(6,0.1*ppm)); ctx.fill(); ctx.stroke(); }
+  if(mode==="build"){ // petite flèche « boing » pour montrer à quoi ça sert
+    const ax=(x0+x1)/2, ay=y-1.3*ppm-Math.abs(Math.sin(clock*4))*0.4*ppm; ctx.strokeStyle=C.paper; ctx.lineWidth=Math.max(3,0.12*ppm); ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.beginPath(); ctx.moveTo(ax,ay+0.9*ppm); ctx.lineTo(ax,ay); ctx.moveTo(ax-0.3*ppm,ay+0.3*ppm); ctx.lineTo(ax,ay); ctx.lineTo(ax+0.3*ppm,ay+0.3*ppm); ctx.stroke(); }
+}
 let canonFx={};
 function canonAngleNow(pc,pi){
   const tgt=canonAng(pc.type)*Math.PI/180;
@@ -1511,6 +1550,7 @@ function drawTrack(X,Y,ppm){
     if(p.type==="ascenseur") drawElevator(p,pi,X,Y,ppm);
     if(p.type==="catapulte") drawCatapult(p,pi,X,Y,ppm);
     if(isCanon(p.type)) drawCanon(p,pi,X,Y,ppm);
+    if(p.type==="trampoline") drawTrampoline(p,pi,X,Y,ppm);
     if(p.type==="fusee"){ const used=sim&&sim.used&&sim.used[pi]; for(let k=0;k<(used?2:3);k++){ const rx=X(p.x0+0.8+k*0.7), ry=Y(p.y0-0.35); const rh=0.9*ppm, rw=0.24*ppm;
         ctx.fillStyle=k%2?C.accent:C.rail; ctx.strokeStyle=C.ink; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(rx-rw/2,ry); ctx.lineTo(rx-rw/2,ry-rh); ctx.lineTo(rx,ry-rh-rw*1.2); ctx.lineTo(rx+rw/2,ry-rh); ctx.lineTo(rx+rw/2,ry); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.fillStyle=C.paper; ctx.fillRect(rx-rw/2+1,ry-rh*0.6,rw-2,rh*0.15); } }
